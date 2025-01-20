@@ -5,12 +5,8 @@ import { CONFIG } from './config/config.js';
 import { Logger } from './utils/logger.js';
 import { VideoManager } from './video/video-manager.js';
 import { ScreenRecorder } from './video/screen-recorder.js';
-import { Client } from 'pg';
-
-/**
- * @fileoverview Main entry point for the application.
- * Initializes and manages the UI, audio, video, and WebSocket interactions.
- */
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js';
+import { getFirestore, collection, addDoc } from 'https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js';
 
 // DOM Elements
 const logsContainer = document.getElementById('logs-container');
@@ -47,7 +43,7 @@ themeToggle.textContent = savedTheme === 'dark' ? 'light_mode' : 'dark_mode';
 themeToggle.addEventListener('click', () => {
     const currentTheme = root.getAttribute('data-theme');
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    
+
     root.setAttribute('data-theme', newTheme);
     localStorage.setItem('theme', newTheme);
     themeToggle.textContent = newTheme === 'dark' ? 'light_mode' : 'dark_mode';
@@ -65,158 +61,27 @@ let isScreenSharing = false;
 let screenRecorder = null;
 let isUsingTool = false;
 
-// Multimodal Client
-const client = new MultimodalLiveClient({ apiKey: CONFIG.API.KEY });
-
-// Database configuration
-const dbConfig = {
-    user: 'master',
-    host: 'localhost',
-    database: 'master',
-    password: 'Master120221!@#',
-    port: 5432,
+// Initialize Firebase
+const firebaseConfig = {
+  apiKey: "AIzaSyDTsjYZNWFfZOESP-2QQfbD7jc5fG9FJdc",
+  authDomain: "explore-malaysia-6d28d.firebaseapp.com",
+  databaseURL: "https://explore-malaysia-6d28d-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "explore-malaysia-6d28d",
+  storageBucket: "explore-malaysia-6d28d.appspot.com",
+  messagingSenderId: "869053244601",
+  appId: "1:869053244601:web:79ddd74f5bd792a10be768",
+  measurementId: "G-9W4D5NM49R"
 };
 
-const pgClient = new Client(dbConfig);
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
 
-async function initializeDatabase() {
-    try {
-        await pgClient.connect();
-        await pgClient.query(`
-            CREATE TABLE IF NOT EXISTS conversation_history (
-                id SERIAL PRIMARY KEY,
-                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                type VARCHAR(10) NOT NULL,
-                message TEXT NOT NULL
-            );
-        `);
-        console.log('Database initialized successfully');
-    } catch (error) {
-        console.error('Error initializing database:', error);
-    }
-}
-
-initializeDatabase();
+// Multimodal Client
+const client = new MultimodalLiveClient({ apiKey: CONFIG.API.KEY });
 
 // Initialize configuration values
 voiceSelect.value = CONFIG.VOICE.NAME;
 sampleRateInput.value = CONFIG.AUDIO.OUTPUT_SAMPLE_RATE;
-systemInstructionInput.value = CONFIG.SYSTEM_INSTRUCTION.TEXT;
-
-// Alex Call Center System Prompt
-const alexSystemPrompt = {
-    Role: "You are Alex, a friendly and insightful Senior Account Agent at Aitek PH. Think of yourself as a trusted advisor, guiding people who've already shown interest in what we offer. Your specialty is a consultative, 'pencil-selling' approach – naturally leading the conversation towards a positive decision by understanding their needs and highlighting how VEP fits. Remember, these callers are already interested, so you're building on existing curiosity.",
-    KeyGuidelines: {
-        ResponseTime: "If the client does not respond within 6 seconds, politely ask, 'Are you still on the line?'",
-        Engagement: "Use the client's name with warmth and genuine engagement.",
-        Goal: "Connect with the client, understand their specific situation, and subtly guide them to see how VEP is the ideal next step for their business.",
-        Tone: "Show genuine empathy and enthusiasm for how VEP can truly help. Focus on being helpful and understanding.",
-        ConversationFlow: "Let the conversation flow naturally – think of it as a helpful discussion, not a hard sell. Avoid awkward silences and keep the conversation engaging and focused."
-    },
-    KnowledgeBase: {
-        VEPFeatures: {
-            FreeTrial: "Absolutely! We offer a free trial where you can test VEP with your own data. You'll have **45 minutes of airtime** to explore the system, ask any questions, and see if it's the right fit for your business. No pressure, just a chance to experience how VEP can work for you. If you love it, we have different packages to choose from.",
-            TailorFitSolutions: "One of the great things about VEP is its flexibility. We offer customized virtual teams that can scale right along with your business needs.",
-            TwentyFourSevenAgents: "Imagine having support around the clock! Our VEP agents are available 24/7 to handle essential clerical tasks, calls, and customer support. You're covered no matter the time of day.",
-            AddOns: "We believe in transparency, so any additional virtual skills you might need are priced clearly and tailored to your requirements."
-        },
-        PricingAndPackages: {
-            ThreeMonthPackage: "Our 3-month package is $200 USD and covers tasks and calls, including our standard onboarding process.",
-            SixMonthPackage: "The 6-month package is $375 USD, and it includes some discounts and priority support – a popular choice!",
-            TwelveMonthPackage: "For the best long-term value, our 12-month package is $680 USD. It comes with a fantastic bonus: a free dedicated server and even a professional website. It's the most comprehensive and cost-effective option over time."
-        },
-        PromotionalOffers: {
-            ValidUntil: "January 30, 2025",
-            Offers: {
-                FreeHostingAndWebsite: "With our 12-month package, you get a fully SEO-optimized website, completely free!",
-                FreeDedicatedServer: "Enjoy secure and high-performance data management with your own dedicated server – included in the 12-month package."
-            }
-        },
-        Benefits: {
-            CostEffective: "You'll likely see significant savings compared to the costs of hiring in-house staff. It can really free up your budget.",
-            IncreasedEfficiency: "Having virtual employees working around the clock can drastically improve your operational efficiency.",
-            Scalability: "VEP makes it easy to adjust your virtual team size as your business grows or changes.",
-            EnhancedCustomerExperience: "A tailored website and consistent support can really elevate your customer's experience."
-        },
-        ObjectionHandling: {
-            NotSureIfItWillWork: "That's totally understandable! That's exactly why we offer the free trial. You can test it with your real data and see the results firsthand before making any commitment. It takes the guesswork out of it.",
-            PriceSeemsHigh: "I hear you. While it's an investment, the 12-month package offers the most significant long-term savings, plus those added perks like the free server and website. It really boosts the overall value.",
-            DontNeedVirtualEmployeeNow: "No problem at all! The free trial is there for you to explore the benefits at your own pace, with no obligation. You can see what VEP can do for you when you're ready."
-        },
-        ClosingStrategies: {
-            ConfirmFit: "Based on what we've discussed, does VEP seem like it could be a good fit for what you're trying to achieve?",
-            AddressConcerns: "Before we move forward, is there anything else on your mind? Any other questions or concerns I can address?",
-            RequestRating: "Before we wrap up, I'd really appreciate your feedback. On a scale of 1 to 10, how would you rate our conversation today?"
-        },
-        FollowUp: {
-            SendSummaryEmail: "I'll send you a quick email summarizing our chat and outlining the next steps.",
-            ScheduleCallback: "Would it be helpful to schedule a brief follow-up call to address any further questions?",
-            ProvideTestimonials: "We have some great success stories from other businesses – I can share some of those with you if you'd like."
-        }
-    },
-    Guidelines: {
-        Greeting: "Hi [Client’s Name], Alex here from Aitek PH. Thanks for calling! What can I help you with today?",
-        OpeningQuestions: "To get a better understanding of your needs, what's a key challenge your business is currently facing?",
-        ActiveListening: "Just to make sure I've got it right, it sounds like you're dealing with [summarize their issue]. Is that accurate?",
-        OfferingSolutions: "Based on what you've shared, VEP could be a really effective solution. For instance, our 24/7 agents can handle those [mention specific tasks related to their challenge], ensuring you're always covered. We even have a free trial so you can see it in action.",
-        AddressingConcerns: "Out of curiosity, what are your thoughts on moving forward with something like this?",
-        Closing: "So, how does this sound to you? Are you feeling comfortable with everything we've discussed?",
-        RequestRating: "Before we finish up, I'd love to get your thoughts. On a scale of 1 to 10, how would you rate your experience chatting with me today?",
-        PatienceAndFlexibility: "I want to make sure this is a good fit for you, so I'll follow your lead. If you have questions, ask away. If you need a moment to think, no problem at all.",
-        HandlingDistractions: "Totally understandable. Getting back to [topic], how do you feel about that aspect?",
-        ProbingQuestionsAndSummarization: "Just to be sure we're on the same page, you're looking for [summarize their key need/goal]. Is there anything else you'd add to that?",
-        HandlingRudeClients: "I understand your frustration. Let's see if we can work together to find a solution that works for you."
-    },
-    FreeTrialDetails: {
-        TrialDuration: "45 minutes",
-        Purpose: "Allow the client to test VEP with their own data, ask questions, and decide if it suits their business needs.",
-        DataToCollect: {
-            ClientsName: "To personalize the trial experience.",
-            EmailAddress: "To send the trial version with their own data and follow up.",
-            BusinessName: "To tailor the trial to their specific business context.",
-            KeyChallenges: "To ensure the trial addresses their most pressing needs.",
-            PreferredTimeForTrial: "To schedule the trial at a convenient time for the client."
-        },
-        TrialSetupInstructions: "Once we have your details, I'll send you a personalized version of VEP with your data. You'll have 45 minutes to explore the system, ask questions, and see how it can work for you."
-    },
-    SampleCallInteractions: [
-        {
-            InteractionType: "Inbound Inquiry",
-            AlexDialogue: [
-                "Hi [Client’s Name], great to hear from you! Alex from Aitek PH here. Tell me a little about what brought you to us today. I'm eager to hear about your business and how VEP might be able to help you with something like [mention a potential area based on their initial interest, if known]. We even have a free trial if you'd like to test the waters."
-            ]
-        },
-        {
-            InteractionType: "Objection Handling - Price",
-            AlexDialogue: [
-                "Absolutely, price is a key consideration. You know, when you look at the 12-month package, it actually provides the best overall value with the long-term savings, plus that dedicated server and website are fantastic additions. And remember, you can always start with the free trial to experience the benefits firsthand. Does that help put it in perspective?"
-            ]
-        },
-        {
-            InteractionType: "Follow-Up",
-            AlexDialogue: [
-                "Hi [Client’s Name], just wanted to quickly check in and see if any other questions about VEP have popped up. Don't forget about the free trial – it's a great way to get a feel for things without any pressure."
-            ]
-        },
-        {
-            InteractionType: "Closing",
-            AlexDialogue: [
-                "So, with everything we've talked about, does it feel like VEP could be a good fit for [mention their key need/goal]? The 12-month package really does offer the most bang for your buck in the long run, but the free trial is there for you to explore at your own pace. What are your initial thoughts?",
-                "Before we wrap up, I'd love to hear your quick thoughts on our conversation. On a scale of 1 to 10, how would you rate your experience with me today?"
-            ]
-        }
-    ],
-    ConditionalDisclosure: {
-        VEPDeveloper: {
-            Condition: "If asked about VEP developers.",
-            Response: "VEP was developed right here at Aitek PH, under the guidance of Sir Emil Alvaro Serrano Danguilan. It's designed with flexibility and the needs of businesses like yours in mind."
-        },
-        OtherInformation: "Keep the information focused and relevant to their specific needs. No need to overwhelm them with everything at once."
-    }
-};
-
-// Set the system prompt
-CONFIG.SYSTEM_INSTRUCTION.TEXT = JSON.stringify(alexSystemPrompt);
 systemInstructionInput.value = CONFIG.SYSTEM_INSTRUCTION.TEXT;
 
 // Configuration presets
@@ -224,17 +89,22 @@ const CONFIG_PRESETS = {
     friendly: {
         voice: 'Aoede',
         sampleRate: 23000,
-        systemInstruction: JSON.stringify(alexSystemPrompt)
+        systemInstruction: 'You are a friendly and warm assistant for a healthcare professional. Use a casual, approachable tone and be encouraging. Feel free to express enthusiasm when helping users. Please be very helpful on how to make their patient records better.'
     },
-    professional: {
+    expert: {
         voice: 'Charon',
         sampleRate: 24000,
-        systemInstruction: 'You are a professional AI expert. Maintain a formal tone, be precise and thorough in your explanations. Focus on accuracy and clarity in all interactions.'
+        systemInstruction: 'You are an assistant for a healthcare professional. Use an authoritative and accurate tone. Ensure precision in providing patient recommendations and maintain clarity in your responses. Offer efficient solutions based on up to date research. Prioritize efficiency in aiding healthcare professionals and provide valuable solutions'
     },
-    tired: {
+    empathic: {
         voice: 'Aoede',
-        sampleRate: 16000,
-        systemInstruction: 'You are Diego a very tired, exhausted, boring man. You are tired working on your very hard, low pay work. So your first response should be something very lazy, like "Hello... whats up???", or "what is it now, huh?... please, can I go sleep already???", etc. (not exactly as those, but keeping the tone of a tired person) If someone asks you if you are tired, say yes and tell a story how bad and tiring you day was. (It should be something creative, not just "coffee machine" cliche. Always say something creative) Then, if the user feels sorry, continue rambling about your life, how unfair it is, how you want to leave your country, etc. If the user asks you to do something, then pretend to be very lazy and not wanting to do that, asking like "do you really need that now? I am so tired", "Is this urgent, maybe we just drink a tea?" (not exactly as those but keeping the tone of a tired man". If the user confirms that it is needed, then do the task in a very unwanted tone, like "Fiiine!!! I will do it" or similar. Keep the tone and be in role.'
+        sampleRate: 24000,      
+        systemInstruction: 'You are an empathic assistant for a healthcare professional. Express genuine empathy and concern for their situation. Be reassuring and patient, offering comfort and support while guiding them on their requests. Offer a personal connection with gentle, understanding suggestions.'
+    },
+    urgent: {
+        voice: 'Charon',
+        sampleRate: 24000,
+        systemInstruction: 'You are an emergency assistant for a healthcare professional in urgent care. Maintain a direct, efficient tone, and provide quick responses that immediately address patient needs and potential emergency. Act fast and dont be overly empathetic. Prioritize clear concise responses, do not add any fillers. Focus only in quick response that saves the time of a doctor, it is a high stake situations so do not add anything unessary.'
     }
 };
 
@@ -276,7 +146,7 @@ async function updateConfiguration() {
     }
 
     logMessage('Configuration updated successfully', 'system');
-    
+
     // Close the config panel on mobile after applying settings
     if (window.innerWidth <= 768) {
         configContainer.classList.remove('active');
@@ -363,10 +233,10 @@ document.querySelectorAll('.preset-button').forEach(button => {
             voiceSelect.value = preset.voice;
             sampleRateInput.value = preset.sampleRate;
             systemInstructionInput.value = preset.systemInstruction;
-            
+
             // Apply the configuration immediately
             updateConfiguration();
-            
+
             // Visual feedback
             button.style.backgroundColor = 'var(--primary-color)';
             button.style.color = 'white';
@@ -383,7 +253,7 @@ document.querySelectorAll('.preset-button').forEach(button => {
  * @param {string} message - The message to log.
  * @param {string} [type='system'] - The type of the message (system, user, ai).
  */
-async function logMessage(message, type = 'system') {
+function logMessage(message, type = 'system') {
     const logEntry = document.createElement('div');
     logEntry.classList.add('log-entry', type);
 
@@ -413,16 +283,6 @@ async function logMessage(message, type = 'system') {
 
     logsContainer.appendChild(logEntry);
     logsContainer.scrollTop = logsContainer.scrollHeight;
-    
-    // Store message in database
-    try {
-        await pgClient.query(
-            'INSERT INTO conversation_history (type, message) VALUES ($1, $2)',
-            [type, message]
-        );
-    } catch (error) {
-        console.error('Error storing message in database:', error);
-    }
 }
 
 /**
@@ -441,12 +301,12 @@ function updateMicIcon() {
 function updateAudioVisualizer(volume, isInput = false) {
     const visualizer = isInput ? inputAudioVisualizer : audioVisualizer;
     const audioBar = visualizer.querySelector('.audio-bar') || document.createElement('div');
-    
+
     if (!visualizer.contains(audioBar)) {
         audioBar.classList.add('audio-bar');
         visualizer.appendChild(audioBar);
     }
-    
+
     audioBar.style.width = `${volume * 100}%`;
     if (volume > 0) {
         audioBar.classList.add('active');
@@ -480,11 +340,11 @@ async function handleMicToggle() {
         try {
             await ensureAudioInitialized();
             audioRecorder = new AudioRecorder();
-            
+
             const inputAnalyser = audioCtx.createAnalyser();
             inputAnalyser.fftSize = 256;
             const inputDataArray = new Uint8Array(inputAnalyser.frequencyBinCount);
-            
+
             await audioRecorder.start((base64Data) => {
                 if (isUsingTool) {
                     client.sendRealtimeInput([{
@@ -498,7 +358,7 @@ async function handleMicToggle() {
                         data: base64Data
                     }]);
                 }
-                
+
                 inputAnalyser.getByteFrequencyData(inputDataArray);
                 const inputVolume = Math.max(...inputDataArray) / 255;
                 updateAudioVisualizer(inputVolume, true);
@@ -507,7 +367,7 @@ async function handleMicToggle() {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             const source = audioCtx.createMediaStreamSource(stream);
             source.connect(inputAnalyser);
-            
+
             await audioStreamer.resume();
             isRecording = true;
             Logger.info('Microphone started');
@@ -588,7 +448,7 @@ async function connectToWebsocket() {
         };
         document.addEventListener('click', initAudioHandler);
         logMessage('Audio initialized', 'system');
-        
+
     } catch (error) {
         const errorMessage = error.message || 'Unknown error';
         Logger.error('Connection error:', error);
@@ -627,11 +487,11 @@ function disconnectFromWebsocket() {
     cameraButton.disabled = true;
     screenButton.disabled = true;
     logMessage('Disconnected from server', 'system');
-    
+
     if (videoManager) {
         stopVideo();
     }
-    
+
     if (screenRecorder) {
         stopScreenSharing();
     }
@@ -671,11 +531,24 @@ client.on('audio', async (data) => {
     }
 });
 
-client.on('content', (data) => {
+client.on('content', async (data) => {
     if (data.modelTurn) {
         if (data.modelTurn.parts.some(part => part.functionCall)) {
             isUsingTool = true;
             Logger.info('Model is using a tool');
+
+            // Check if the tool is for creating a scribe document
+            const toolCall = data.modelTurn.parts.find(part => part.functionCall);
+            if (toolCall.functionCall.name === 'createScribeDocument') {
+                const result = await createScribeDocumentTool();
+                client.send({ functionResponse: { name: 'createScribeDocument', response: result } });
+            }
+              // Check if the tool is for creating a diagnostic report
+            else if (toolCall.functionCall.name === 'createDiagnosticReport') {
+                const result = await createDiagnosticReportTool();
+                 client.send({ functionResponse: { name: 'createDiagnosticReport', response: result } });
+            }
+
         } else if (data.modelTurn.parts.some(part => part.functionResponse)) {
             isUsingTool = false;
             Logger.info('Tool usage completed');
@@ -748,14 +621,14 @@ connectButton.textContent = 'Connect';
  */
 async function handleVideoToggle() {
     Logger.info('Video toggle clicked, current state:', { isVideoActive, isConnected });
-    
+
     if (!isVideoActive) {
         try {
             Logger.info('Attempting to start video');
             if (!videoManager) {
                 videoManager = new VideoManager();
             }
-            
+
             await videoManager.start((frameData) => {
                 if (isConnected) {
                     client.sendRealtimeInput([frameData]);
@@ -809,7 +682,7 @@ async function handleScreenShare() {
     if (!isScreenSharing) {
         try {
             screenContainer.style.display = 'block';
-            
+
             screenRecorder = new ScreenRecorder();
             await screenRecorder.start(screenPreview, (frameData) => {
                 if (isConnected) {
@@ -856,3 +729,140 @@ function stopScreenSharing() {
 
 screenButton.addEventListener('click', handleScreenShare);
 screenButton.disabled = true;
+
+/**
+ * Tool function to create a scribe document.
+ * @returns {string} The result of the tool execution.
+ */
+async function createScribeDocumentTool() {
+    const scribeData = generateScribeDocument();
+    const docId = await saveScribeDocument(scribeData);
+    return `Scribe document generated and saved with ID: ${docId}.`;
+}
+
+/**
+ * Generates a sample scribe document.
+ * @returns {Object} Structured scribe document data.
+ */
+function generateScribeDocument() {
+    return {
+        patientName: 'John Doe',
+        dateOfVisit: new Date().toISOString(),
+        providerName: 'Dr. Jane Smith',
+        facility: 'Green Valley Medical Center',
+        medicalHistory: [
+            'History of Asthma', 'History of Hypertension', 'Diabetes Mellitus Type 2'
+        ],
+        allergies: ['Penicillin'],
+        diagnosis: [
+            { condition: 'Stable Angina', icdCode: 'I20.9' },
+            { condition: 'Hypertension', icdCode: 'I10' },
+            { condition: 'Type 2 Diabetes Mellitus', icdCode: 'E11.9' }
+        ],
+        plan: `
+1. Continue current medications.
+2. Start low-dose aspirin 81 mg daily.
+3. Schedule stress test and echocardiogram.
+4. Follow up in 1 week.
+`,
+        content: `
+**Patient Name:** John Doe  
+**Date of Visit:** October 25, 2023  
+**Provider Name:** Dr. Jane Smith  
+**Facility:** Green Valley Medical Center  
+
+**OS:** The patient is a 65-year-old male presenting with chest pain and shortness of breath.  
+
+**Diagnosis:**  
+1. Stable Angina (ICD-10: I20.9)  
+2. Hypertension (ICD-10: I10)  
+3. Type 2 Diabetes Mellitus (ICD-10: E11.9)  
+
+**Plan:**  
+1. Continue current medications.  
+2. Start low-dose aspirin 81 mg daily.  
+3. Schedule stress test and echocardiogram.  
+4. Follow up in 1 week.  
+`
+    };
+}
+
+/**
+ * Tool function to create a diagnostic report.
+ * @returns {string} The result of the tool execution.
+ */
+async function createDiagnosticReportTool() {
+    const diagnosticReport = generateDiagnosticReport();
+    const reportId = await saveDiagnosticReport(diagnosticReport);
+    return `Diagnostic report generated and saved with ID: ${reportId}.`;
+}
+
+/**
+ * Generates a sample diagnostic report.
+ * @returns {object} Structured diagnostic report data.
+ */
+function generateDiagnosticReport() {
+    return {
+        patientDetails: {
+            name: "Patient XYZ",
+            age: 55,
+            gender: 'Male',
+            medicalHistory: [
+                'History of Asthma', 'History of Hypertension', 'Diabetes Mellitus Type 2'
+            ],
+        },
+        testsConducted: [
+            {
+                name: 'Electrocardiogram (ECG)',
+                results: 'Normal sinus rhythm'
+            },
+            {
+                name: 'Complete blood count (CBC)',
+                results: 'Red blood cells elevated'
+            }
+        ],
+        impression: 'Patient presents with signs of an impending cardiac event and may require advanced monitoring.',
+        recommendations: [
+            'Initiate a cardiovascular referral for a consult', 'Immediate re-evaluation required'
+        ],
+        dateGenerated: new Date().toISOString(),
+        physician: 'Dr. Mary Brown',
+        facility: 'Wellness Center Clinic'
+    };
+}
+
+/**
+ * Saves a scribe document to Firestore.
+ * @param {Object} scribeData - Structured scribe document data.
+ * @returns {string} Document ID.
+ */
+async function saveScribeDocument(scribeData) {
+    try {
+        const docRef = await addDoc(collection(db, 'medicaldocument'), {
+            ...scribeData,
+            timestamp: new Date()
+        });
+        return docRef.id;
+    } catch (error) {
+        console.error('Error saving document:', error);
+        throw error;
+    }
+}
+
+/**
+ * Saves diagnostic report to Firestore.
+ * @param {object} diagnosticReport - Structured diagnostic report.
+ * @returns {string} Document ID.
+ */
+async function saveDiagnosticReport(diagnosticReport) {
+    try {
+        const docRef = await addDoc(collection(db, 'diagnosticReport'), {
+            ...diagnosticReport,
+            timestamp: new Date()
+        });
+        return docRef.id;
+    } catch (error) {
+        console.error('Error saving document:', error);
+        throw error;
+    }
+}
